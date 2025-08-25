@@ -13,9 +13,11 @@ pub fn build(b: *std.Build) void {
     // Run tests
     const tests = b.addTest(.{
         .name = "tests",
-        .root_source_file = b.path("DiffMatchPatch.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("DiffMatchPatch.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
     const step_tests = b.addRunArtifact(tests);
 

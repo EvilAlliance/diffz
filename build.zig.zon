@@ -1,6 +1,7 @@
 .{
-    .name = "diffz",
+    .name = .diffz,
     .version = "0.0.1",
+    .fingerprint = 0x23937d88f29d9f92,
     .paths = .{
         "DiffMatchPatch.zig",
         ".gitattributes",
