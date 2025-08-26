@@ -161,11 +161,11 @@ pub const Patch = struct {
     /// Indices are printed as 1-based, not 0-based.
     /// @return The GNU diff string.
     pub fn asText(patch: Patch, allocator: Allocator) ![]const u8 {
-        var text_array = std.ArrayList(u8).init(allocator);
-        defer text_array.deinit();
-        const writer = text_array.writer();
+        var text_array = std.ArrayList(u8){};
+        defer text_array.deinit(allocator);
+        const writer = text_array.writer(allocator);
         try patch.writeText(writer);
-        return text_array.toOwnedSlice();
+        return text_array.toOwnedSlice(allocator);
     }
 
     const format = std.fmt.format;
@@ -1616,9 +1616,9 @@ fn diffCleanupSemanticScore(one: []const u8, two: []const u8) usize {
         (std.mem.endsWith(u8, one, "\n\n") or std.mem.endsWith(u8, one, "\n\r\n"));
     const blankLine2 = lineBreak2 and
         (std.mem.startsWith(u8, two, "\n\n") or
-        std.mem.startsWith(u8, two, "\r\n\n") or
-        std.mem.startsWith(u8, two, "\n\r\n") or
-        std.mem.startsWith(u8, two, "\r\n\r\n"));
+            std.mem.startsWith(u8, two, "\r\n\n") or
+            std.mem.startsWith(u8, two, "\n\r\n") or
+            std.mem.startsWith(u8, two, "\r\n\r\n"));
 
     if (blankLine1 or blankLine2) {
         // Five points for blank lines.
@@ -1648,8 +1648,8 @@ pub fn diffCleanupEfficiency(
 ) error{OutOfMemory}!void {
     var changes = false;
     // Stack of indices where equalities are found.
-    var equalities = std.ArrayList(usize).init(allocator);
-    defer equalities.deinit();
+    var equalities = std.ArrayList(usize){};
+    defer equalities.deinit(allocator);
     // Always equal to equalities[equalitiesLength-1][1]
     var last_equality: []const u8 = "";
     var ipointer: isize = 0; // Index of current position.
@@ -1666,7 +1666,7 @@ pub fn diffCleanupEfficiency(
         if (diffs.items[pointer].operation == .equal) { // Equality found.
             if (diffs.items[pointer].text.len < dmp.diff_edit_cost and (post_ins or post_del)) {
                 // Candidate found.
-                try equalities.append(pointer);
+                try equalities.append(allocator, pointer);
                 pre_ins = post_ins;
                 pre_del = post_del;
                 last_equality = diffs.items[pointer].text;
@@ -1691,8 +1691,8 @@ pub fn diffCleanupEfficiency(
             // <ins>A</ins><del>B</del>X<del>C</del>
             if ((last_equality.len != 0) and
                 ((pre_ins and pre_del and post_ins and post_del) or
-                ((last_equality.len < dmp.diff_edit_cost / 2) and
-                (boolInt(pre_ins) + boolInt(pre_del) + boolInt(post_ins) + boolInt(post_del) == 3))))
+                    ((last_equality.len < dmp.diff_edit_cost / 2) and
+                        (boolInt(pre_ins) + boolInt(pre_del) + boolInt(post_ins) + boolInt(post_del) == 3))))
             {
                 // Duplicate record.
                 try diffs.ensureUnusedCapacity(allocator, 1);
@@ -1869,11 +1869,11 @@ pub fn diffPrettyFormat(
     diffs: DiffList,
     deco: DiffDecorations,
 ) ![]const u8 {
-    var out = std.ArrayList(u8).init(allocator);
-    defer out.deinit();
-    const writer = out.writer();
+    var out = std.ArrayList(u8){};
+    defer out.deinit(allocator);
+    const writer = out.writer(allocator);
     _ = try writeDiffPrettyFormat(allocator, writer, diffs, deco);
-    return out.toOwnedSlice();
+    return out.toOwnedSlice(allocator);
 }
 
 /// Pretty-print a diff for output to a terminal.
@@ -2371,8 +2371,9 @@ fn makePatchInternal(
     }
     const extra_u: usize = if (extra > 0) @intCast(extra) else 0;
     const dummy_diff = Diff{ .operation = .equal, .text = "" };
-    var postpatch = try std.ArrayList(u8).initCapacity(allocator, text.len + extra_u);
-    defer postpatch.deinit();
+    var postpatch = std.ArrayList(u8){};
+    try postpatch.ensureTotalCapacity(allocator, text.len + extra_u);
+    defer postpatch.deinit(allocator);
     postpatch.appendSliceAssumeCapacity(text);
     var patch = Patch{};
     for (diffs.items, 0..) |a_diff, i| {
@@ -2396,7 +2397,7 @@ fn makePatchInternal(
                 };
                 patch.diffs.appendAssumeCapacity(d);
                 patch.length2 += a_diff.text.len;
-                try postpatch.insertSlice(char_count2, a_diff.text);
+                try postpatch.insertSlice(allocator, char_count2, a_diff.text);
             },
             .delete => {
                 try patch.diffs.ensureUnusedCapacity(allocator, 1);
@@ -2412,7 +2413,7 @@ fn makePatchInternal(
                 };
                 patch.diffs.appendAssumeCapacity(d);
                 patch.length1 += a_diff.text.len;
-                try postpatch.replaceRange(char_count2, a_diff.text.len, "");
+                try postpatch.replaceRange(allocator, char_count2, a_diff.text.len, "");
             },
             .equal => {
                 //
@@ -2540,8 +2541,9 @@ pub fn patchApply(
     defer deinitPatchList(allocator, &patches);
     const null_padding = try dmp.patchAddPadding(allocator, &patches);
     defer allocator.free(null_padding);
-    var text = try std.ArrayList(u8).initCapacity(allocator, og_text.len + 2 * null_padding.len);
-    defer text.deinit();
+    var text = std.ArrayList(u8){};
+    try text.ensureTotalCapacity(allocator, og_text.len + 2 * null_padding.len);
+    defer text.deinit(allocator);
     text.appendSliceAssumeCapacity(null_padding);
     text.appendSliceAssumeCapacity(og_text);
     text.appendSliceAssumeCapacity(null_padding);
@@ -2603,7 +2605,7 @@ pub fn patchApply(
                 // Perfect match, just shove the replacement text in.
                 const diff_text = try diffAfterText(allocator, a_patch.diffs);
                 defer allocator.free(diff_text);
-                try text.replaceRange(start, text1.len, diff_text);
+                try text.replaceRange(allocator, start, text1.len, diff_text);
             } else {
                 // Imperfect match.  Run a diff to get a framework of equivalent
                 // indices.
@@ -2629,7 +2631,7 @@ pub fn patchApply(
                             const index2 = diffIndex(diffs, index1);
                             if (a_diff.operation == .insert) {
                                 // Insertion
-                                try text.insertSlice(start + index2, a_diff.text);
+                                try text.insertSlice(allocator, start + index2, a_diff.text);
                             } else if (a_diff.operation == .delete) {
                                 // Deletion
                                 const delete_at = diffIndex(diffs, index1 + a_diff.text.len) - index2;
@@ -2656,7 +2658,7 @@ pub fn patchApply(
     // strip padding
     text.replaceRangeAssumeCapacity(0, null_padding.len, &.{});
     text.items.len -= null_padding.len;
-    return .{ try text.toOwnedSlice(), all_applied };
+    return .{ try text.toOwnedSlice(allocator), all_applied };
 }
 
 // Look through the patches and break up any which are longer than the
@@ -2856,8 +2858,9 @@ fn patchAddPadding(
 ) error{OutOfMemory}![]const u8 {
     if (patches.items.len == 0) return "";
     const pad_len = dmp.patch_margin;
-    var paddingcodes = try std.ArrayList(u8).initCapacity(allocator, pad_len);
-    defer paddingcodes.deinit();
+    var paddingcodes = std.ArrayList(u8){};
+    try paddingcodes.ensureTotalCapacity(allocator, pad_len);
+    defer paddingcodes.deinit(allocator);
 
     {
         var control_code: u8 = 1;
@@ -2935,7 +2938,7 @@ fn patchAddPadding(
         patch_end.length2 += extra_len;
         patch_end.length1 += extra_len;
     }
-    return paddingcodes.toOwnedSlice();
+    return paddingcodes.toOwnedSlice(allocator);
 }
 
 /// Given an array of patches, return another array that is identical.
@@ -2955,11 +2958,11 @@ fn patchListClone(allocator: Allocator, patches: *PatchList) error{OutOfMemory}!
 /// @param patches List of Patch objects.
 /// @return Text representation of patches.
 pub fn patchToText(allocator: Allocator, patches: PatchList) error{OutOfMemory}![]const u8 {
-    var text_array = std.ArrayList(u8).init(allocator);
-    defer text_array.deinit();
-    const writer = text_array.writer();
+    var text_array = std.ArrayList(u8){};
+    defer text_array.deinit(allocator);
+    const writer = text_array.writer(allocator);
     try writePatch(writer, patches);
-    return text_array.toOwnedSlice();
+    return text_array.toOwnedSlice(allocator);
 }
 
 /// Stream a `PatchList` to the provided Writer.
@@ -3118,27 +3121,28 @@ fn decodeUri(allocator: Allocator, line: []const u8) DiffError![]const u8 {
     if (std.mem.indexOf(u8, line, "%")) |first| {
         // Text to decode.
         // Result will always be shorter than line:
-        var new_line = try std.ArrayList(u8).initCapacity(allocator, line.len);
-        defer new_line.deinit();
-        try new_line.appendSlice(line[0..first]);
+        var new_line = std.ArrayList(u8){};
+        try new_line.ensureTotalCapacity(allocator, line.len);
+        defer new_line.deinit(allocator);
+        try new_line.appendSlice(allocator, line[0..first]);
         var out_buf: [1]u8 = .{0};
         var codeunit = std.fmt.hexToBytes(
             &out_buf,
             line[first + 1 .. first + 3],
         ) catch return error.BadPatchString;
-        try new_line.append(codeunit[0]);
+        try new_line.append(allocator, codeunit[0]);
         var cursor = first + 3;
         while (std.mem.indexOfScalarPos(u8, line, cursor, '%')) |next| {
             codeunit = std.fmt.hexToBytes(
                 &out_buf,
                 line[next + 1 .. next + 3],
             ) catch return error.BadPatchString;
-            try new_line.append(codeunit[0]);
+            try new_line.append(allocator, codeunit[0]);
             cursor = next + 3;
         } else {
-            try new_line.appendSlice(line[cursor..]);
+            try new_line.appendSlice(allocator, line[cursor..]);
         }
-        return new_line.toOwnedSlice();
+        return new_line.toOwnedSlice(allocator);
     } else {
         return allocator.dupe(u8, line);
     }
@@ -3207,10 +3211,10 @@ fn writeUriEncoded(writer: anytype, text: []const u8) !usize {
 
 fn encodeUri(allocator: std.mem.Allocator, text: []const u8) ![]u8 {
     var charlist = try std.ArrayList(u8).initCapacity(allocator, text.len);
-    defer charlist.deinit();
-    const writer = charlist.writer();
+    defer charlist.deinit(allocator);
+    const writer = charlist.writer(allocator);
     _ = try writeUriEncoded(writer, text);
-    return charlist.toOwnedSlice();
+    return charlist.toOwnedSlice(allocator);
 }
 
 //|
@@ -3464,10 +3468,10 @@ test diffHalfMatch {
 test diffLinesToChars {
     const allocator = testing.allocator;
     // Convert lines down to characters.
-    var tmp_array_list = std.ArrayList([]const u8).init(allocator);
-    defer tmp_array_list.deinit();
-    try tmp_array_list.append("alpha\n");
-    try tmp_array_list.append("beta\n");
+    var tmp_array_list = std.ArrayList([]const u8){};
+    defer tmp_array_list.deinit(allocator);
+    try tmp_array_list.append(allocator, "alpha\n");
+    try tmp_array_list.append(allocator, "beta\n");
 
     var result = try diffLinesToChars(allocator, "alpha\nbeta\nalpha\n", "beta\nalpha\nbeta\n");
     try testing.expectEqualStrings(" ! ", result.chars_1); // Shared lines #1
@@ -3476,9 +3480,9 @@ test diffLinesToChars {
     result.deinit(allocator);
 
     tmp_array_list.items.len = 0;
-    try tmp_array_list.append("alpha\r\n");
-    try tmp_array_list.append("beta\r\n");
-    try tmp_array_list.append("\r\n");
+    try tmp_array_list.append(allocator, "alpha\r\n");
+    try tmp_array_list.append(allocator, "beta\r\n");
+    try tmp_array_list.append(allocator, "\r\n");
 
     result = try diffLinesToChars(allocator, "", "alpha\r\nbeta\r\n\r\n\r\n");
     try testing.expectEqualStrings("", result.chars_1); // Empty string and blank lines #1
@@ -3486,8 +3490,8 @@ test diffLinesToChars {
     try testing.expectEqualDeep(tmp_array_list.items, result.line_array.items); // Empty string and blank lines #3
     result.deinit(allocator);
     tmp_array_list.items.len = 0;
-    try tmp_array_list.append("a");
-    try tmp_array_list.append("b");
+    try tmp_array_list.append(allocator, "a");
+    try tmp_array_list.append(allocator, "b");
 
     result = try diffLinesToChars(allocator, "a", "b");
     try testing.expectEqualStrings(" ", result.chars_1); // No linebreaks #1.
@@ -3498,18 +3502,18 @@ test diffLinesToChars {
     {
         const n: u21 = 1024;
 
-        var line_list = std.ArrayList(u8).init(allocator);
-        defer line_list.deinit();
-        var char_list = std.ArrayList(u8).init(allocator);
-        defer char_list.deinit();
+        var line_list = std.ArrayList(u8){};
+        defer line_list.deinit(allocator);
+        var char_list = std.ArrayList(u8){};
+        defer char_list.deinit(allocator);
 
         var i: u21 = CHAR_OFFSET;
         var char_buf: [4]u8 = undefined;
         while (i < n) : (i += 1) {
             const nbytes = std.unicode.wtf8Encode(i, &char_buf) catch unreachable;
-            try line_list.appendSlice(char_buf[0..nbytes]);
-            try line_list.append('\n');
-            try char_list.appendSlice(char_buf[0..nbytes]);
+            try line_list.appendSlice(allocator, char_buf[0..nbytes]);
+            try line_list.append(allocator, '\n');
+            try char_list.appendSlice(allocator, char_buf[0..nbytes]);
         }
         const codepoint_len = std.unicode.utf8CountCodepoints(char_list.items) catch unreachable;
         try testing.expectEqual(@as(usize, n - CHAR_OFFSET), codepoint_len);
@@ -3916,25 +3920,25 @@ test diffCleanupSemanticLossless {
 
 fn rebuildtexts(allocator: std.mem.Allocator, diffs: DiffList) ![2][]const u8 {
     var text = [2]std.ArrayList(u8){
-        std.ArrayList(u8).init(allocator),
-        std.ArrayList(u8).init(allocator),
+        std.ArrayList(u8){},
+        std.ArrayList(u8){},
     };
     errdefer {
-        text[0].deinit();
-        text[1].deinit();
+        text[0].deinit(allocator);
+        text[1].deinit(allocator);
     }
 
     for (diffs.items) |myDiff| {
         if (myDiff.operation != .insert) {
-            try text[0].appendSlice(myDiff.text);
+            try text[0].appendSlice(allocator, myDiff.text);
         }
         if (myDiff.operation != .delete) {
-            try text[1].appendSlice(myDiff.text);
+            try text[1].appendSlice(allocator, myDiff.text);
         }
     }
     return .{
-        try text[0].toOwnedSlice(),
-        try text[1].toOwnedSlice(),
+        try text[0].toOwnedSlice(allocator),
+        try text[1].toOwnedSlice(allocator),
     };
 }
 
